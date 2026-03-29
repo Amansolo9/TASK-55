@@ -91,7 +91,7 @@ func TestLoginAllowsForcedPasswordChangeWorkflow(t *testing.T) {
 	}
 }
 
-func TestPasswordExpiryBlocksAdminLogin(t *testing.T) {
+func TestPasswordExpiryForcesAdminPasswordChangeSession(t *testing.T) {
 	st := setupStore(t)
 	defer st.Close()
 	auth := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute)
@@ -102,8 +102,19 @@ func TestPasswordExpiryBlocksAdminLogin(t *testing.T) {
 	if _, err := st.DB.Exec(`UPDATE users SET password_set_at = ? WHERE username = ?`, time.Now().Add(-181*24*time.Hour), "expired-admin"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := auth.Login("expired-admin", "expiredpass12"); err == nil {
-		t.Fatalf("expected expired password rejection")
+	token, user, err := auth.Login("expired-admin", "expiredpass12")
+	if err != nil {
+		t.Fatalf("expected expired admin login to return constrained session: %v", err)
+	}
+	if token == "" || user == nil || !user.MustChangePass {
+		t.Fatalf("expected must-change session for expired admin")
+	}
+	stored, err := st.FindUserByUsername("expired-admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.MustChangePass {
+		t.Fatalf("expected stored must_change_password to be set")
 	}
 }
 

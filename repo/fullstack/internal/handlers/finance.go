@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
 
 	"clubops_portal/fullstack/internal/models"
 
@@ -10,10 +12,14 @@ import (
 
 func (h *Handler) createBudget(c *fiber.Ctx) error {
 	user := currentUser(c)
-	clubID := int64(1)
+	var clubID int64
 	if user.Role == "admin" {
+		formClub := strings.TrimSpace(c.FormValue("club_id"))
+		if formClub == "" {
+			return apiError(c, fiber.StatusBadRequest, "validation_error", "club_id required")
+		}
 		var err error
-		clubID, err = parseInt64WithDefault(c.FormValue("club_id"), 1)
+		clubID, err = strconv.ParseInt(formClub, 10, 64)
 		if err != nil {
 			return apiError(c, fiber.StatusBadRequest, "validation_error", "invalid club_id")
 		}
@@ -102,7 +108,32 @@ func (h *Handler) budgetProjection(c *fiber.Ctx) error {
 	if err != nil {
 		return apiError(c, fiber.StatusBadRequest, "validation_error", "invalid expected_remaining_spend")
 	}
-	return c.JSON(fiber.Map{"budget_id": b.ID, "projected_end_balance": h.finance.Projection(*b, remainingSpend)})
+	projected := h.finance.Projection(*b, remainingSpend)
+	if c.Get("HX-Request") == "true" {
+		toneBorder := "border-emerald-300"
+		toneBG := "bg-emerald-50"
+		toneText := "text-emerald-800"
+		if projected < 0 {
+			toneBorder = "border-red-300"
+			toneBG = "bg-red-50"
+			toneText = "text-red-800"
+		} else if projected <= b.Amount*0.1 {
+			toneBorder = "border-amber-300"
+			toneBG = "bg-amber-50"
+			toneText = "text-amber-800"
+		}
+		return c.Render("partials/budget_projection_result", fiber.Map{
+			"BudgetID":           b.ID,
+			"ProjectedLabel":     fmt.Sprintf("%.2f", projected),
+			"AmountLabel":        fmt.Sprintf("%.2f", b.Amount),
+			"SpentLabel":         fmt.Sprintf("%.2f", b.Spent),
+			"ExpectedSpendLabel": fmt.Sprintf("%.2f", remainingSpend),
+			"ToneBorder":         toneBorder,
+			"ToneBG":             toneBG,
+			"ToneText":           toneText,
+		})
+	}
+	return c.JSON(fiber.Map{"budget_id": b.ID, "projected_end_balance": projected})
 }
 
 func (h *Handler) recordBudgetSpend(c *fiber.Ctx) error {

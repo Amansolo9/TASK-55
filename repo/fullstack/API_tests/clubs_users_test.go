@@ -155,3 +155,23 @@ func TestAdminUserManagementUpdatesRoleAndClub(t *testing.T) {
 		t.Fatalf("expected updated team lead scope")
 	}
 }
+
+func TestUsersPageIncludesAdminResetForm(t *testing.T) {
+	app, st := setupApp(t)
+	defer st.Close()
+	adminHash, _ := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute).HashPassword("StrongAdmin123!")
+	if err := st.UpdatePassword(1, adminHash, false); err != nil {
+		t.Fatal(err)
+	}
+	auth := login(t, app, "admin", "StrongAdmin123!")
+	req := httptest.NewRequest(http.MethodGet, "/users", nil)
+	addAuth(req, auth)
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "/api/auth/admin-reset") {
+		t.Fatalf("expected users page to include admin reset form, got %d body=%s", resp.StatusCode, string(body))
+	}
+}

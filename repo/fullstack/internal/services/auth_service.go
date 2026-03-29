@@ -79,7 +79,8 @@ func (s *AuthService) Login(username, password string) (string, *models.User, er
 	}
 	_ = s.store.UpdateUserLockState(u.ID, 0, nil)
 	if u.Role == "admin" && now.Sub(u.PasswordSetAt) > 180*24*time.Hour {
-		return "", nil, errors.New("password expired; reset required")
+		_ = s.store.SetMustChangePassword(u.ID, true)
+		u.MustChangePass = true
 	}
 	token, err := randomToken(32)
 	if err != nil {

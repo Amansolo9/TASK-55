@@ -1,0 +1,13 @@
+{
+  "name": "clubops-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "test": "playwright test",
+    "test:auth": "playwright test --grep-invert @smoke",
+    "test:smoke": "playwright test --grep @smoke"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.0"
+  }
+}

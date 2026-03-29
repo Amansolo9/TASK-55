@@ -152,6 +152,50 @@ func TestMemberImportRejectsInvalidCustomFields(t *testing.T) {
 	}
 }
 
+func TestMemberImportHTMXReturnsDownloadLinkForErrorReport(t *testing.T) {
+	app, st := setupApp(t)
+	defer st.Close()
+	authSvc := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute)
+	hash, err := authSvc.HashPassword("OrganizerPass123!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("org-badimport-htmx", hash, "organizer", int64Ptr(1)); err != nil {
+		t.Fatal(err)
+	}
+	auth := login(t, app, "org-badimport-htmx", "OrganizerPass123!")
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", "members.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = part.Write([]byte("full_name,email,phone,join_date,position_title,is_active,group_name,custom_fields\nAlex Doe,alex@example.com,123,2026-03-01,Captain,true,Alpha,{bad-json}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/members/import", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("HX-Request", "true")
+	addAuth(req, auth)
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 422 {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 422 invalid custom_fields, got %d body=%s", resp.StatusCode, string(respBody))
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	bodyText := string(respBody)
+	if !strings.Contains(bodyText, "Download error report CSV") || !strings.Contains(bodyText, "/static/uploads/reports/") {
+		t.Fatalf("expected htmx error response with downloadable report link, got %s", bodyText)
+	}
+}
+
 func TestMemberImportCSVSupportsExportShape(t *testing.T) {
 	app, st := setupApp(t)
 	defer st.Close()
@@ -252,6 +296,7 @@ func TestMemberCreateAuditRedactsPII(t *testing.T) {
 	}
 	auth := login(t, app, "admin", "StrongAdmin123!")
 	form := url.Values{}
+	form.Set("club_id", "1")
 	form.Set("full_name", "Audit Target")
 	form.Set("email", "audit-sensitive@example.com")
 	form.Set("phone", "+1-555-444-3333")
@@ -277,6 +322,39 @@ func TestMemberCreateAuditRedactsPII(t *testing.T) {
 	}
 	if strings.Contains(after, "audit-sensitive@example.com") || strings.Contains(after, "+1-555-444-3333") || strings.Contains(after, "111-22-3333") {
 		t.Fatalf("expected PII redaction in audit log after_state, got %s", after)
+	}
+}
+
+func TestAdminMemberCreateRequiresClubID(t *testing.T) {
+	app, st := setupApp(t)
+	defer st.Close()
+	adminHash, err := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute).HashPassword("StrongAdmin123!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdatePassword(1, adminHash, false); err != nil {
+		t.Fatal(err)
+	}
+	auth := login(t, app, "admin", "StrongAdmin123!")
+	form := url.Values{}
+	form.Set("full_name", "Needs Club")
+	form.Set("email", "scope@example.com")
+	form.Set("phone", "123")
+	form.Set("join_date", "2026-03-01")
+	form.Set("position_title", "Lead")
+	form.Set("is_active", "true")
+	form.Set("group_name", "A")
+	form.Set("custom_fields", `{}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/members", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	addAuth(req, auth)
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 400 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 400 missing club_id for admin member create, got %d body=%s", resp.StatusCode, string(body))
 	}
 }
 
@@ -338,6 +416,7 @@ func TestMemberCustomFieldsEncryptedAtRestAndDecryptedOnExport(t *testing.T) {
 	}
 	auth := login(t, app, "admin", "StrongAdmin123!")
 	form := url.Values{}
+	form.Set("club_id", "1")
 	form.Set("full_name", "Encrypted Custom")
 	form.Set("email", "enc@example.com")
 	form.Set("phone", "123")
@@ -414,5 +493,32 @@ func TestLegacyPlaintextCustomFieldsAutoMigrated(t *testing.T) {
 	}
 	if !strings.HasPrefix(stored, "enc:v1:") {
 		t.Fatalf("expected legacy plaintext custom_fields migration to encrypted marker, got %s", stored)
+	}
+}
+
+func TestAdminMembersPageIncludesClubSelectorsForCreateAndImport(t *testing.T) {
+	app, st := setupApp(t)
+	defer st.Close()
+	adminHash, err := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute).HashPassword("StrongAdmin123!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdatePassword(1, adminHash, false); err != nil {
+		t.Fatal(err)
+	}
+	auth := login(t, app, "admin", "StrongAdmin123!")
+	req := httptest.NewRequest(http.MethodGet, "/members", nil)
+	addAuth(req, auth)
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected members page success, got %d", resp.StatusCode)
+	}
+	markup := string(body)
+	if strings.Count(markup, "name=\"club_id\"") < 3 {
+		t.Fatalf("expected admin members page to include club selectors for create/import/filter, body=%s", markup)
 	}
 }

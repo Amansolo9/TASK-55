@@ -23,8 +23,12 @@ func (h *Handler) loginPage(c *fiber.Ctx) error {
 	return h.render(c, "login", fiber.Map{}, "layouts/main")
 }
 
+func (h *Handler) changePasswordPage(c *fiber.Ctx) error {
+	return h.render(c, "change_password", fiber.Map{"User": currentUser(c)}, "layouts/main")
+}
+
 func (h *Handler) loginAction(c *fiber.Ctx) error {
-	token, _, err := h.auth.Login(c.FormValue("username"), c.FormValue("password"))
+	token, user, err := h.auth.Login(c.FormValue("username"), c.FormValue("password"))
 	if err != nil {
 		if c.Get("HX-Request") == "true" {
 			return c.Status(fiber.StatusUnauthorized).SendString(err.Error())
@@ -32,19 +36,19 @@ func (h *Handler) loginAction(c *fiber.Ctx) error {
 		return h.render(c.Status(fiber.StatusUnauthorized), "login", fiber.Map{"Error": err.Error()}, "layouts/main")
 	}
 	c.Cookie(&fiber.Cookie{Name: "session_token", Value: token, HTTPOnly: true, Secure: c.Protocol() == "https", Path: "/", SameSite: "Lax"})
+	redirectPath := "/"
+	if user != nil && user.MustChangePass {
+		redirectPath = "/change-password"
+	}
 	if c.Get("HX-Request") == "true" {
-		c.Set("HX-Redirect", "/")
+		c.Set("HX-Redirect", redirectPath)
 		return c.SendStatus(fiber.StatusNoContent)
 	}
-	return c.Redirect("/")
+	return c.Redirect(redirectPath)
 }
 
 func (h *Handler) register(c *fiber.Ctx) error {
-	clubID, err := parseOptionalInt64(c.FormValue("club_id"))
-	if err != nil {
-		return c.Status(400).SendString("invalid club_id")
-	}
-	if err := h.auth.Register(c.FormValue("username"), c.FormValue("password"), "member", clubID); err != nil {
+	if err := h.auth.Register(c.FormValue("username"), c.FormValue("password"), "member", nil); err != nil {
 		return h.writeServiceError(c, err)
 	}
 	return c.SendString("registered")
@@ -62,6 +66,7 @@ func (h *Handler) changePassword(c *fiber.Ctx) error {
 	if err := h.auth.ChangePassword(user.ID, c.FormValue("new_password")); err != nil {
 		return h.writeServiceError(c, err)
 	}
+	c.Set("HX-Redirect", "/")
 	return c.SendString("password changed")
 }
 

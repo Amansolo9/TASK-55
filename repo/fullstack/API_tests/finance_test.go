@@ -27,6 +27,7 @@ func TestLoginAndCreateBudget(t *testing.T) {
 
 	auth := login(t, app, "admin", "StrongAdmin123!")
 	bform := url.Values{}
+	bform.Set("club_id", "1")
 	bform.Set("period_type", "monthly")
 	bform.Set("period_start", "2026-03")
 	bform.Set("amount", "2000")
@@ -40,6 +41,36 @@ func TestLoginAndCreateBudget(t *testing.T) {
 	if bresp.StatusCode != 200 {
 		body, _ := io.ReadAll(bresp.Body)
 		t.Fatalf("expected 200 creating budget, got %d body=%s", bresp.StatusCode, string(body))
+	}
+}
+
+func TestAdminBudgetCreationRequiresClubID(t *testing.T) {
+	app, st := setupApp(t)
+	defer st.Close()
+
+	adminHash, err := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute).HashPassword("StrongAdmin123!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdatePassword(1, adminHash, false); err != nil {
+		t.Fatal(err)
+	}
+
+	auth := login(t, app, "admin", "StrongAdmin123!")
+	bform := url.Values{}
+	bform.Set("period_type", "monthly")
+	bform.Set("period_start", "2026-03")
+	bform.Set("amount", "2000")
+	breq := httptest.NewRequest(http.MethodPost, "/api/budgets", strings.NewReader(bform.Encode()))
+	breq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	addAuth(breq, auth)
+	bresp, err := app.Test(breq, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bresp.StatusCode != 400 {
+		body, _ := io.ReadAll(bresp.Body)
+		t.Fatalf("expected 400 missing club_id for admin budget create, got %d body=%s", bresp.StatusCode, string(body))
 	}
 }
 
@@ -57,6 +88,7 @@ func TestAuthorizationMemberCannotCreateBudget(t *testing.T) {
 	auth := login(t, app, "member1", "MemberPassword1!")
 
 	bform := url.Values{}
+	bform.Set("club_id", "1")
 	bform.Set("period_type", "monthly")
 	bform.Set("period_start", "2026-03")
 	bform.Set("amount", "2000")
@@ -169,6 +201,34 @@ func TestBudgetProjectionEndpoint(t *testing.T) {
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 200 projection, got %d body=%s", resp.StatusCode, string(body))
+	}
+}
+
+func TestBudgetProjectionHTMXReturnsReadableCard(t *testing.T) {
+	app, st := setupApp(t)
+	defer st.Close()
+	if _, err := st.DB.Exec(`INSERT INTO budgets (club_id, account_code, campus_code, project_code, period_type, period_start, amount, spent, created_by, status) VALUES (1, 'acct', 'camp', 'proj', 'monthly', '2026-03', 1000, 400, 1, 'active')`); err != nil {
+		t.Fatal(err)
+	}
+	authSvc := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute)
+	hash, err := authSvc.HashPassword("OrganizerPass123!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("org-proj-htmx", hash, "organizer", int64Ptr(1)); err != nil {
+		t.Fatal(err)
+	}
+	auth := login(t, app, "org-proj-htmx", "OrganizerPass123!")
+	req := httptest.NewRequest(http.MethodGet, "/api/budgets/1/projection?expected_remaining_spend=100", nil)
+	req.Header.Set("HX-Request", "true")
+	addAuth(req, auth)
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "Projected end balance") {
+		t.Fatalf("expected projection card html, got %d body=%s", resp.StatusCode, string(body))
 	}
 }
 
@@ -319,5 +379,28 @@ func TestBudgetChangeReviewDuplicateSubmitReturnsNonSuccess(t *testing.T) {
 			body, _ := io.ReadAll(resp.Body)
 			t.Fatalf("expected duplicate review submit to be rejected, got %d body=%s", resp.StatusCode, string(body))
 		}
+	}
+}
+
+func TestAdminBudgetsPageIncludesClubSelectorOnCreateForm(t *testing.T) {
+	app, st := setupApp(t)
+	defer st.Close()
+	adminHash, _ := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute).HashPassword("StrongAdmin123!")
+	if err := st.UpdatePassword(1, adminHash, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.Exec(`INSERT OR IGNORE INTO clubs (id, name) VALUES (2, 'Club Two')`); err != nil {
+		t.Fatal(err)
+	}
+	auth := login(t, app, "admin", "StrongAdmin123!")
+	req := httptest.NewRequest(http.MethodGet, "/budgets", nil)
+	addAuth(req, auth)
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "name=\"club_id\"") {
+		t.Fatalf("expected admin budgets page to include club selector, got %d body=%s", resp.StatusCode, string(body))
 	}
 }

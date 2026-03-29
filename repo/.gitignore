@@ -10,3 +10,7 @@ fullstack/static/uploads/avatars/*
 
 sessions/
 .tmp/
+
+fullstack/e2e/node_modules/
+fullstack/e2e/test-results/
+fullstack/e2e/playwright-report/

@@ -156,6 +156,9 @@ func TestForcedPasswordChangeBlocksPagesUntilChanged(t *testing.T) {
 	if resp.StatusCode != 302 {
 		t.Fatalf("expected redirect while password change required, got %d", resp.StatusCode)
 	}
+	if location := resp.Header.Get("Location"); location != "/change-password" {
+		t.Fatalf("expected redirect to /change-password, got %q", location)
+	}
 	form := url.Values{}
 	form.Set("new_password", "NewForcePass123!")
 	changeReq := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", strings.NewReader(form.Encode()))
@@ -168,6 +171,65 @@ func TestForcedPasswordChangeBlocksPagesUntilChanged(t *testing.T) {
 	if changeResp.StatusCode != 200 {
 		body, _ := io.ReadAll(changeResp.Body)
 		t.Fatalf("expected password change success, got %d body=%s", changeResp.StatusCode, string(body))
+	}
+}
+
+func TestExpiredAdminCanRecoverViaChangePasswordPage(t *testing.T) {
+	app, st := setupApp(t)
+	defer st.Close()
+	authSvc := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute)
+	hash, err := authSvc.HashPassword("ExpiredAdmin123!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdatePassword(1, hash, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.Exec(`UPDATE users SET password_set_at = ? WHERE id = 1`, time.Now().Add(-181*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	auth := login(t, app, "admin", "ExpiredAdmin123!")
+	blockedReq := httptest.NewRequest(http.MethodGet, "/users", nil)
+	addAuth(blockedReq, auth)
+	blockedResp, err := app.Test(blockedReq, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blockedResp.StatusCode != 302 || blockedResp.Header.Get("Location") != "/change-password" {
+		t.Fatalf("expected redirect to change-password for expired admin, got status=%d location=%q", blockedResp.StatusCode, blockedResp.Header.Get("Location"))
+	}
+	pageReq := httptest.NewRequest(http.MethodGet, "/change-password", nil)
+	addAuth(pageReq, auth)
+	pageResp, err := app.Test(pageReq, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageBody, _ := io.ReadAll(pageResp.Body)
+	if pageResp.StatusCode != 200 || !strings.Contains(string(pageBody), "/api/auth/change-password") {
+		t.Fatalf("expected change-password page with form, got %d body=%s", pageResp.StatusCode, string(pageBody))
+	}
+	form := url.Values{}
+	form.Set("new_password", "RecoveredAdmin123!")
+	changeReq := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", strings.NewReader(form.Encode()))
+	changeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	addAuth(changeReq, auth)
+	changeResp, err := app.Test(changeReq, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changeResp.StatusCode != 200 {
+		body, _ := io.ReadAll(changeResp.Body)
+		t.Fatalf("expected recovery password change success, got %d body=%s", changeResp.StatusCode, string(body))
+	}
+	retryReq := httptest.NewRequest(http.MethodGet, "/users", nil)
+	addAuth(retryReq, auth)
+	retryResp, err := app.Test(retryReq, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retryResp.StatusCode != 200 {
+		body, _ := io.ReadAll(retryResp.Body)
+		t.Fatalf("expected admin access restored after password change, got %d body=%s", retryResp.StatusCode, string(body))
 	}
 }
 
@@ -230,6 +292,64 @@ func TestRegistrationCannotEscalateRole(t *testing.T) {
 	}
 	if u.Role != "member" {
 		t.Fatalf("expected forced member role, got %s", u.Role)
+	}
+}
+
+func TestRegistrationIgnoresClubAssignment(t *testing.T) {
+	app, st := setupApp(t)
+	defer st.Close()
+	if _, err := st.DB.Exec(`INSERT OR IGNORE INTO clubs (id, name) VALUES (2, 'Club Two')`); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{}
+	form.Set("username", "selfclub")
+	form.Set("password", "StrongPass123!")
+	form.Set("club_id", "2")
+	req := httptest.NewRequest(http.MethodPost, "/register", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected registration success, got %d body=%s", resp.StatusCode, string(body))
+	}
+	u, err := st.FindUserByUsername("selfclub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.ClubID != nil {
+		t.Fatalf("expected public register to ignore club_id assignment")
+	}
+}
+
+func TestAuthenticatedResponsesSetNoStoreAndLogoutClearsSession(t *testing.T) {
+	app, st := setupApp(t)
+	defer st.Close()
+	adminHash, _ := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute).HashPassword("StrongAdmin123!")
+	if err := st.UpdatePassword(1, adminHash, false); err != nil {
+		t.Fatal(err)
+	}
+	auth := login(t, app, "admin", "StrongAdmin123!")
+	pageReq := httptest.NewRequest(http.MethodGet, "/users", nil)
+	addAuth(pageReq, auth)
+	pageResp, err := app.Test(pageReq, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pageResp.Header.Get("Cache-Control") == "" || !strings.Contains(pageResp.Header.Get("Cache-Control"), "no-store") {
+		t.Fatalf("expected no-store cache header on authenticated page, got %q", pageResp.Header.Get("Cache-Control"))
+	}
+	logoutReq := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	addAuth(logoutReq, auth)
+	logoutResp, err := app.Test(logoutReq, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookieHeader := strings.ToLower(strings.Join(logoutResp.Header.Values("Set-Cookie"), ";"))
+	if !strings.Contains(cookieHeader, "session_token=") {
+		t.Fatalf("expected logout to clear session cookie, headers=%v", logoutResp.Header.Values("Set-Cookie"))
 	}
 }
 

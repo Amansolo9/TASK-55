@@ -34,6 +34,13 @@ func (s *ReviewService) CreateReviewForOrder(orderID, reviewerID int64, stars in
 	if err != nil {
 		return 0, err
 	}
+	exists, err := s.store.ReviewExistsForOrder(orderID, reviewerID)
+	if err != nil {
+		return 0, err
+	}
+	if exists {
+		return 0, errors.New("duplicate review submission")
+	}
 	if strings.ToLower(strings.TrimSpace(order.Status)) != "fulfilled" {
 		return 0, errors.New("review requires a fulfilled order")
 	}

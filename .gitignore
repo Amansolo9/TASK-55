@@ -1,3 +1,7 @@
 .tmp
 convert_ai_session.py
 tree.md
+docs
+sessions
+metadata.json
+Self-Test.md

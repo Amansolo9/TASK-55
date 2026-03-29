@@ -33,12 +33,15 @@ func RequireAuth(roles ...string) fiber.Handler {
 			return c.Redirect("/login")
 		}
 		user := u.(*models.User)
-		if user.MustChangePass && !strings.HasPrefix(c.Path(), "/api/auth/") {
+		if user.MustChangePass && c.Path() != "/change-password" && !strings.HasPrefix(c.Path(), "/api/auth/") {
 			if strings.HasPrefix(c.Path(), "/api") {
 				return writeAPIError(c, fiber.StatusForbidden, "password_change_required", "Password change required.")
 			}
-			return c.Redirect("/login")
+			return c.Redirect("/change-password")
 		}
+		c.Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+		c.Set("Pragma", "no-cache")
+		c.Set("Expires", "0")
 		if len(roles) > 0 {
 			allowed := false
 			for _, r := range roles {

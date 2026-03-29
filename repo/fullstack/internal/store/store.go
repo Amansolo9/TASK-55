@@ -28,11 +28,6 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 func (s *SQLiteStore) Close() error { return s.DB.Close() }
 
 func (s *SQLiteStore) InsertCreditRule(v models.CreditRuleVersion) (int64, error) {
-	if v.IsActive {
-		if _, err := s.DB.Exec(`UPDATE credit_rule_versions SET is_active = 0`); err != nil {
-			return 0, err
-		}
-	}
 	res, err := s.DB.Exec(`INSERT INTO credit_rule_versions (version_label, formula_json, makeup_enabled, retake_enabled, effective_from, effective_to, created_by, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		v.VersionLabel, v.FormulaJSON, v.MakeupEnabled, v.RetakeEnabled, v.EffectiveFrom, v.EffectiveTo, v.CreatedBy, v.IsActive)
 	if err != nil {
@@ -52,7 +47,7 @@ func (s *SQLiteStore) GetCreditRuleForDate(txnDate string) (*models.CreditRuleVe
 		WHERE is_active = 1
 		AND effective_from <= ?
 		AND (effective_to IS NULL OR effective_to >= ?)
-		ORDER BY id DESC LIMIT 1`, txnDate, txnDate).
+		ORDER BY effective_from DESC, id DESC LIMIT 1`, txnDate, txnDate).
 		Scan(&r.ID, &r.VersionLabel, &r.FormulaJSON, &makeupEnabled, &retakeEnabled, &r.EffectiveFrom, &effectiveTo, &r.CreatedBy, &r.CreatedAt, &isActive)
 	if err != nil {
 		return nil, err

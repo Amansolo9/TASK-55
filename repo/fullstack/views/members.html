@@ -2,6 +2,14 @@
   <div class="bg-white rounded-xl border p-4">
     <h2 class="font-semibold mb-3">Create Member</h2>
     <form class="grid gap-2" hx-post="/api/members" hx-target="#member-result">
+      {{if and .User (eq .User.Role "admin")}}
+      <select name="club_id" class="border rounded px-2 py-1" required>
+        <option value="">Select club</option>
+        {{range .Clubs}}
+        <option value="{{.ID}}">{{.Name}}</option>
+        {{end}}
+      </select>
+      {{end}}
       <input name="full_name" class="border rounded px-2 py-1" placeholder="Full name" required />
       <input name="email" class="border rounded px-2 py-1" placeholder="email@example.com" required />
       <input name="phone" class="border rounded px-2 py-1" placeholder="+1-555-111-2222" required />
@@ -20,6 +28,14 @@
     <div class="mb-4 grid gap-3 md:grid-cols-2">
       <form class="grid gap-2" hx-encoding="multipart/form-data" hx-post="/api/members/import" hx-target="#member-import-result">
         <label class="text-sm font-medium">Import Members CSV</label>
+        {{if and .User (eq .User.Role "admin")}}
+        <select name="club_id" class="border rounded px-2 py-1" required>
+          <option value="">Select club</option>
+          {{range .Clubs}}
+          <option value="{{.ID}}">{{.Name}}</option>
+          {{end}}
+        </select>
+        {{end}}
         <input type="file" name="file" class="border rounded px-2 py-1" required />
         <button class="bg-slate-900 text-white rounded px-3 py-2">Import</button>
         <div id="member-import-result" class="text-sm text-slate-700"></div>

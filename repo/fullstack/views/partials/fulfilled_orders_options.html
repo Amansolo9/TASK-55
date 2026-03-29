@@ -1,0 +1,6 @@
+<option value="">Select fulfilled order</option>
+{{range .Orders}}
+<option value="{{.ID}}">#{{.ID}} - {{.ServiceLabel}} (site {{.SiteID}}, member {{.MemberID}})</option>
+{{else}}
+<option value="">No fulfilled orders available</option>
+{{end}}

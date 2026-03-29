@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"clubops_portal/fullstack/internal/models"
 	"clubops_portal/fullstack/internal/services"
 
 	"github.com/gofiber/fiber/v2"
@@ -50,6 +51,100 @@ func (h *Handler) createReview(c *fiber.Ctx) error {
 	}
 	c.Set("HX-Trigger", `{"reviewsUpdated":true}`)
 	return c.SendString("review submitted")
+}
+
+func (h *Handler) createFulfilledOrder(c *fiber.Ctx) error {
+	user := currentUser(c)
+	if user == nil {
+		return apiError(c, fiber.StatusUnauthorized, "unauthorized", "Authentication required.")
+	}
+	if user.Role == "member" {
+		return apiError(c, fiber.StatusForbidden, "forbidden", "You are not allowed to perform this action.")
+	}
+	var clubID int64
+	if user.Role == "admin" {
+		parsed, err := strconv.ParseInt(strings.TrimSpace(c.FormValue("club_id")), 10, 64)
+		if err != nil {
+			return apiError(c, fiber.StatusBadRequest, "validation_error", "invalid club_id")
+		}
+		clubID = parsed
+	} else {
+		if user.ClubID == nil {
+			return apiError(c, fiber.StatusForbidden, "club_scope_required", "club scope required")
+		}
+		clubID = *user.ClubID
+	}
+	siteID, err := strconv.ParseInt(c.FormValue("site_id"), 10, 64)
+	if err != nil {
+		return apiError(c, fiber.StatusBadRequest, "validation_error", "invalid site_id")
+	}
+	memberID, err := strconv.ParseInt(c.FormValue("member_id"), 10, 64)
+	if err != nil {
+		return apiError(c, fiber.StatusBadRequest, "validation_error", "invalid member_id")
+	}
+	member, err := h.store.GetMemberByID(memberID)
+	if err != nil {
+		return h.writeServiceError(c, err)
+	}
+	if member.ClubID != clubID {
+		return apiError(c, fiber.StatusForbidden, "forbidden", "member must belong to selected club")
+	}
+	serviceLabel := strings.TrimSpace(c.FormValue("service_label"))
+	if serviceLabel == "" {
+		return apiError(c, fiber.StatusBadRequest, "validation_error", "service_label required")
+	}
+	fulfilledAt := time.Now()
+	if raw := strings.TrimSpace(c.FormValue("fulfilled_at")); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return apiError(c, fiber.StatusBadRequest, "validation_error", "fulfilled_at must be RFC3339")
+		}
+		fulfilledAt = parsed
+	}
+	id, err := h.store.InsertFulfilledOrder(models.FulfilledOrder{
+		ClubID:       clubID,
+		SiteID:       siteID,
+		MemberID:     memberID,
+		OwnerUserID:  user.ID,
+		ServiceLabel: serviceLabel,
+		Status:       "fulfilled",
+		FulfilledAt:  fulfilledAt,
+	})
+	if err != nil {
+		return h.writeServiceError(c, err)
+	}
+	c.Set("HX-Trigger", `{"fulfilledOrdersUpdated":true}`)
+	return c.SendString("fulfilled order recorded #" + strconv.FormatInt(id, 10))
+}
+
+func (h *Handler) fulfilledOrdersOptionsPartial(c *fiber.Ctx) error {
+	user := currentUser(c)
+	if user == nil {
+		return apiError(c, fiber.StatusUnauthorized, "unauthorized", "Authentication required.")
+	}
+	var clubID *int64
+	var ownerUserID *int64
+	if user.Role == "member" {
+		ownerUserID = &user.ID
+	} else if user.Role == "admin" {
+		if raw := strings.TrimSpace(c.Query("club_id")); raw != "" {
+			parsed, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil {
+				return c.Status(fiber.StatusBadRequest).SendString("<option value=''>invalid club_id</option>")
+			}
+			clubID = &parsed
+		}
+	} else {
+		if user.ClubID == nil {
+			return c.Status(fiber.StatusForbidden).SendString("<option value=''>club scope required</option>")
+		}
+		clubID = user.ClubID
+	}
+	orders, err := h.store.ListFulfilledOrders(clubID, ownerUserID, 100)
+	if err != nil {
+		return h.writeServiceError(c, err)
+	}
+	return c.Render("partials/fulfilled_orders_options", fiber.Map{"Orders": orders})
 }
 
 func (h *Handler) appealReview(c *fiber.Ctx) error {

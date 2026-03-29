@@ -8,10 +8,19 @@ import (
 )
 
 func (h *Handler) budgetsPage(c *fiber.Ctx) error {
-	if err := requireManagedClub(currentUser(c)); err != nil {
+	user := currentUser(c)
+	if err := requireManagedClub(user); err != nil {
 		return c.Status(403).SendString(err.Error())
 	}
-	return h.render(c, "budgets", fiber.Map{"User": currentUser(c)}, "layouts/main")
+	clubViews := []clubView{}
+	if user != nil && user.Role == "admin" {
+		clubs, err := h.store.ListClubs()
+		if err != nil {
+			return h.writeServiceError(c, err)
+		}
+		clubViews = buildClubViews(clubs)
+	}
+	return h.render(c, "budgets", fiber.Map{"User": user, "Clubs": clubViews}, "layouts/main")
 }
 
 func (h *Handler) reviewsPage(c *fiber.Ctx) error {
@@ -56,8 +65,7 @@ func (h *Handler) membersPage(c *fiber.Ctx) error {
 	} else {
 		clubID = userClubID(user)
 		if clubID == nil {
-			def := int64(1)
-			clubID = &def
+			return c.Status(403).SendString("club scope required")
 		}
 	}
 	limit, err := strconv.Atoi(c.Query("limit", "50"))
@@ -118,11 +126,11 @@ func (h *Handler) clubsPage(c *fiber.Ctx) error {
 		}
 		return h.render(c, "clubs", fiber.Map{"Club": selected, "Clubs": clubViews, "User": user}, "layouts/main")
 	}
-	clubID := int64(1)
-	if id := userClubID(user); id != nil {
-		clubID = *id
+	clubIDPtr := userClubID(user)
+	if clubIDPtr == nil {
+		return c.Status(403).SendString("club scope required")
 	}
-	club, err := h.store.GetClubByID(clubID)
+	club, err := h.store.GetClubByID(*clubIDPtr)
 	if err != nil {
 		return h.writeServiceError(c, err)
 	}

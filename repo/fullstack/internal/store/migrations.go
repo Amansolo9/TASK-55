@@ -204,6 +204,14 @@ func (s *SQLiteStore) AutoMigrate() error {
 			return err
 		}
 	}
+	indexStmts := []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_fulfilled_order_reviewer ON reviews(fulfilled_order_id, reviewer_id)`,
+	}
+	for _, stmt := range indexStmts {
+		if _, err := s.DB.Exec(stmt); err != nil {
+			return err
+		}
+	}
 	alterStmts := []string{
 		`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN password_set_at DATETIME NOT NULL DEFAULT '1970-01-01T00:00:00Z'`,

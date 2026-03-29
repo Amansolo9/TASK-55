@@ -83,6 +83,11 @@ func (s *SQLiteStore) UpdatePassword(userID int64, hash string, mustChange bool)
 	return err
 }
 
+func (s *SQLiteStore) SetMustChangePassword(userID int64, mustChange bool) error {
+	_, err := s.DB.Exec(`UPDATE users SET must_change_password = ? WHERE id = ?`, mustChange, userID)
+	return err
+}
+
 func (s *SQLiteStore) ListUsers(clubID *int64) ([]models.User, error) {
 	query := `SELECT id, username, password_hash, role, club_id, failed_attempts, locked_until, must_change_password, password_set_at, created_at FROM users`
 	args := []any{}

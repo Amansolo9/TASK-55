@@ -1,8 +1,31 @@
 <section class="space-y-6">
+  {{if and .User (ne .User.Role "member")}}
+  <div class="bg-white rounded-xl border p-4">
+    <h2 class="font-semibold mb-3">Record Fulfilled Service</h2>
+    <form class="grid gap-2" hx-post="/api/fulfilled-orders" hx-target="#fulfilled-order-result" hx-swap="innerHTML" hx-on::after-request="if(event.detail.successful) this.reset()">
+      {{if and .User (eq .User.Role "admin")}}
+      <input name="club_id" class="border rounded px-2 py-1" placeholder="Club ID" required />
+      {{end}}
+      <input name="site_id" class="border rounded px-2 py-1" placeholder="Site ID" required />
+      <input name="member_id" class="border rounded px-2 py-1" placeholder="Member ID" required />
+      <input name="service_label" class="border rounded px-2 py-1" placeholder="Service label" required />
+      <button class="bg-emerald-700 text-white rounded px-3 py-2">Record Fulfillment</button>
+    </form>
+    <div id="fulfilled-order-result" class="text-sm mt-2 text-slate-700"></div>
+  </div>
+  {{end}}
+
   <div class="bg-white rounded-xl border p-4">
     <h2 class="font-semibold mb-3">Submit Review</h2>
-    <form class="grid gap-2" hx-post="/api/reviews" hx-encoding="multipart/form-data" hx-target="#review-result" hx-swap="innerHTML" hx-on::after-request="if(event.detail.successful) this.reset()">
-      <input name="fulfilled_order_id" class="border rounded px-2 py-1" placeholder="Fulfilled Order ID" required />
+    <form class="grid gap-2" hx-post="/api/reviews" hx-encoding="multipart/form-data" hx-target="#review-result" hx-swap="innerHTML" hx-disabled-elt="button[type='submit']" hx-on::after-request="if(event.detail.successful) this.reset()">
+      <label class="text-sm font-medium">Fulfilled Order</label>
+      <select name="fulfilled_order_id" class="border rounded px-2 py-1" required
+              hx-get="/partials/fulfilled-orders/options"
+              hx-trigger="load, fulfilledOrdersUpdated from:body"
+              hx-target="this"
+              hx-swap="innerHTML">
+        <option value="">Loading fulfilled orders...</option>
+      </select>
       <select name="stars" class="border rounded px-2 py-1"><option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option></select>
       <input name="tags" class="border rounded px-2 py-1" placeholder="communication,attendance" />
       <textarea name="comment" class="border rounded px-2 py-1" placeholder="comment"></textarea>

@@ -70,6 +70,7 @@ func (h *Handler) RegisterRoutes(app *fiber.App) {
 
 	secured := app.Group("", middleware.RequireAuth())
 	secured.Post("/logout", h.logout)
+	secured.Get("/change-password", h.changePasswordPage)
 	secured.Get("/budgets", middleware.RequireAuth("admin", "organizer", "team_lead"), h.budgetsPage)
 	secured.Get("/reviews", h.reviewsPage)
 	secured.Get("/credits", middleware.RequireAuth("admin", "organizer", "team_lead"), h.creditsPage)
@@ -82,6 +83,7 @@ func (h *Handler) RegisterRoutes(app *fiber.App) {
 	secured.Get("/partials/budgets/list", middleware.RequireAuth("admin", "organizer", "team_lead"), h.budgetsListPartial)
 	secured.Get("/partials/budgets/changes", middleware.RequireAuth("admin", "organizer", "team_lead"), h.budgetChangesPartial)
 	secured.Get("/partials/reviews/list", h.reviewsListPartial)
+	secured.Get("/partials/fulfilled-orders/options", h.fulfilledOrdersOptionsPartial)
 
 	api := app.Group("/api", middleware.RequireAuth())
 	api.Post("/auth/change-password", h.changePassword)
@@ -92,6 +94,7 @@ func (h *Handler) RegisterRoutes(app *fiber.App) {
 	api.Get("/budgets/:id/projection", middleware.RequireAuth("admin", "organizer", "team_lead"), h.budgetProjection)
 	api.Post("/budgets/:id/spend", middleware.RequireAuth("admin", "organizer", "team_lead"), h.recordBudgetSpend)
 	api.Post("/reviews", middleware.RequireAuth("admin", "organizer", "team_lead", "member"), h.createReview)
+	api.Post("/fulfilled-orders", middleware.RequireAuth("admin", "organizer", "team_lead"), h.createFulfilledOrder)
 	api.Post("/reviews/:id/appeal", middleware.RequireAuth("admin", "organizer", "team_lead", "member"), h.appealReview)
 	api.Post("/reviews/:id/moderate", middleware.RequireAuth("admin", "organizer"), h.moderateReview)
 	api.Post("/credit_rules", middleware.RequireAuth("admin"), h.createCreditRule)

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"clubops_portal/fullstack/internal/models"
 	"clubops_portal/fullstack/internal/services"
 )
 
@@ -118,5 +119,20 @@ func TestReviewRejectsImageOverSizeLimit(t *testing.T) {
 	files := []*multipart.FileHeader{{Filename: "large.jpg", Size: 3 * 1024 * 1024}}
 	if _, err := reviewSvc.CreateReviewScoped(1, 1, 1, 10, 5, []string{"attendance"}, "ok", files); err == nil {
 		t.Fatalf("expected per-image size validation")
+	}
+}
+
+func TestReviewUniqueConstraintPerOrderAndReviewer(t *testing.T) {
+	st := setupStore(t)
+	defer st.Close()
+	orderID, err := st.InsertFulfilledOrder(models.FulfilledOrder{ClubID: 1, SiteID: 11, MemberID: 22, OwnerUserID: 1, ServiceLabel: "Session", Status: "fulfilled", FulfilledAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.InsertReview(models.Review{ClubID: 1, FulfilledOrderID: &orderID, SiteID: 11, MemberID: 22, ReviewerID: 1, Stars: 5, Tags: "[]", Comment: "ok", ImagePaths: "[]", AppealStatus: "none"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.InsertReview(models.Review{ClubID: 1, FulfilledOrderID: &orderID, SiteID: 11, MemberID: 22, ReviewerID: 1, Stars: 4, Tags: "[]", Comment: "dup", ImagePaths: "[]", AppealStatus: "none"}); err == nil {
+		t.Fatalf("expected unique constraint to block duplicate review per order and reviewer")
 	}
 }

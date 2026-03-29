@@ -226,7 +226,7 @@ func TestReviewCreateInvalidOrderUsesSchemaError(t *testing.T) {
 	}
 }
 
-func TestReviewCreateDuplicateSubmitIsNonIdempotent(t *testing.T) {
+func TestReviewCreateDuplicateSubmitReturnsConflict(t *testing.T) {
 	app, st := setupApp(t)
 	defer st.Close()
 	authSvc := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute)
@@ -264,17 +264,97 @@ func TestReviewCreateDuplicateSubmitIsNonIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if resp.StatusCode != 200 {
+		if i == 0 && resp.StatusCode != 200 {
 			respBody, _ := io.ReadAll(resp.Body)
-			t.Fatalf("expected duplicate submit to succeed as non-idempotent behavior, got %d body=%s", resp.StatusCode, string(respBody))
+			t.Fatalf("expected first submit to succeed, got %d body=%s", resp.StatusCode, string(respBody))
+		}
+		if i == 1 && resp.StatusCode != 409 {
+			respBody, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected duplicate submit conflict, got %d body=%s", resp.StatusCode, string(respBody))
 		}
 	}
 	var count int
 	if err := st.DB.QueryRow(`SELECT COUNT(1) FROM reviews WHERE fulfilled_order_id = ?`, orderID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 {
-		t.Fatalf("expected 2 reviews after duplicate submit, got %d", count)
+	if count != 1 {
+		t.Fatalf("expected 1 review after duplicate submit guard, got %d", count)
+	}
+}
+
+func TestMemberCannotCreateFulfilledOrder(t *testing.T) {
+	app, st := setupApp(t)
+	defer st.Close()
+	authSvc := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute)
+	hash, err := authSvc.HashPassword("MemberPassword1!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("member-orders", hash, "member", int64Ptr(1)); err != nil {
+		t.Fatal(err)
+	}
+	auth := login(t, app, "member-orders", "MemberPassword1!")
+	form := url.Values{}
+	form.Set("site_id", "301")
+	form.Set("member_id", "901")
+	form.Set("service_label", "Mentoring Session")
+	createReq := httptest.NewRequest(http.MethodPost, "/api/fulfilled-orders", strings.NewReader(form.Encode()))
+	createReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	addAuth(createReq, auth)
+	createResp, err := app.Test(createReq, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createResp.StatusCode != 403 {
+		body, _ := io.ReadAll(createResp.Body)
+		t.Fatalf("expected fulfilled order create forbidden for member, got %d body=%s", createResp.StatusCode, string(body))
+	}
+}
+
+func TestOrganizerCanCreateFulfilledOrderAndSeeOptionList(t *testing.T) {
+	app, st := setupApp(t)
+	defer st.Close()
+	authSvc := services.NewAuthService(st, 30*time.Minute, 5, 15*time.Minute)
+	hash, err := authSvc.HashPassword("OrganizerPass123!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateUser("org-orders", hash, "organizer", int64Ptr(1)); err != nil {
+		t.Fatal(err)
+	}
+	cryptoSvc, err := services.NewCryptoService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberID, err := st.InsertMember(storeMember(1, cryptoSvc.Encrypt("ordermember@example.com"), cryptoSvc.Encrypt("123"), "Order Member"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := login(t, app, "org-orders", "OrganizerPass123!")
+	form := url.Values{}
+	form.Set("site_id", "301")
+	form.Set("member_id", strconv.FormatInt(memberID, 10))
+	form.Set("service_label", "Mentoring Session")
+	createReq := httptest.NewRequest(http.MethodPost, "/api/fulfilled-orders", strings.NewReader(form.Encode()))
+	createReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	addAuth(createReq, auth)
+	createResp, err := app.Test(createReq, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createResp.StatusCode != 200 {
+		body, _ := io.ReadAll(createResp.Body)
+		t.Fatalf("expected organizer fulfilled order create success, got %d body=%s", createResp.StatusCode, string(body))
+	}
+	optionsReq := httptest.NewRequest(http.MethodGet, "/partials/fulfilled-orders/options", nil)
+	addAuth(optionsReq, auth)
+	optionsResp, err := app.Test(optionsReq, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	optionsBody, _ := io.ReadAll(optionsResp.Body)
+	if optionsResp.StatusCode != 200 || !strings.Contains(string(optionsBody), "Mentoring Session") {
+		t.Fatalf("expected fulfilled order options list to include new record, got %d body=%s", optionsResp.StatusCode, string(optionsBody))
 	}
 }
 

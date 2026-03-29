@@ -22,6 +22,10 @@ func main() {
 	if dbPath == "" {
 		dbPath = "./fullstack.db"
 	}
+	port := os.Getenv("APP_PORT")
+	if port == "" {
+		port = "8080"
+	}
 	logEvent("startup", "info", "opening sqlite at %s", dbPath)
 	st, err := store.NewSQLiteStore(dbPath)
 	if err != nil {
@@ -70,8 +74,9 @@ func main() {
 	h := handlers.NewHandler(st, authSvc, financeSvc, creditSvc, reviewSvc, mdmSvc, cryptoSvc, flagSvc)
 	h.RegisterRoutes(app)
 
-	logEvent("startup", "info", "ClubOps server listening on :8080")
-	if err := app.Listen(":8080"); err != nil {
+	listenAddr := ":" + port
+	logEvent("startup", "info", "ClubOps server listening on %s", listenAddr)
+	if err := app.Listen(listenAddr); err != nil {
 		logEvent("startup", "fatal", "listen: %v", err)
 		log.Fatalf("listen: %v", err)
 	}

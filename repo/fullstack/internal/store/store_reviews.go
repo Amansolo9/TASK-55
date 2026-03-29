@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"clubops_portal/fullstack/internal/models"
@@ -109,6 +110,52 @@ func (s *SQLiteStore) InsertFulfilledOrder(order models.FulfilledOrder) (int64, 
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+func (s *SQLiteStore) ListFulfilledOrders(clubID *int64, ownerUserID *int64, limit int) ([]models.FulfilledOrder, error) {
+	query := `SELECT id, club_id, site_id, member_id, owner_user_id, service_label, status, fulfilled_at, created_at FROM fulfilled_orders`
+	args := []any{}
+	where := ""
+	if clubID != nil {
+		where = "club_id = ?"
+		args = append(args, *clubID)
+	}
+	if ownerUserID != nil {
+		if where != "" {
+			where += " AND "
+		}
+		where += "owner_user_id = ?"
+		args = append(args, *ownerUserID)
+	}
+	if where != "" {
+		query += " WHERE " + where
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	query += fmt.Sprintf(" ORDER BY fulfilled_at DESC, id DESC LIMIT %d", limit)
+	rows, err := s.DB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.FulfilledOrder{}
+	for rows.Next() {
+		var order models.FulfilledOrder
+		if err := rows.Scan(&order.ID, &order.ClubID, &order.SiteID, &order.MemberID, &order.OwnerUserID, &order.ServiceLabel, &order.Status, &order.FulfilledAt, &order.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, order)
+	}
+	return out, nil
+}
+
+func (s *SQLiteStore) ReviewExistsForOrder(orderID, reviewerID int64) (bool, error) {
+	var count int
+	if err := s.DB.QueryRow(`SELECT COUNT(1) FROM reviews WHERE fulfilled_order_id = ? AND reviewer_id = ?`, orderID, reviewerID).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (s *SQLiteStore) AppealReview(id int64, reviewerID int64, clubScope *int64) error {

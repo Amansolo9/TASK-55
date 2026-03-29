@@ -1,18 +1,18 @@
 <section class="space-y-6">
   <div class="bg-white rounded-xl border p-4">
     <h2 class="font-semibold mb-3">User Administration</h2>
-    <p class="text-sm text-slate-600">Assign operational roles, club scope, and use admin reset from the API for temporary credentials.</p>
+    <p class="text-sm text-slate-600">Assign operational roles, set club scope, and issue temporary reset passwords.</p>
   </div>
 
   <div class="bg-white rounded-xl border p-4 overflow-x-auto">
     <table class="w-full text-sm">
-      <thead><tr class="text-left"><th>User</th><th>Role</th><th>Club</th><th>Password State</th><th>Action</th></tr></thead>
+      <thead><tr class="text-left"><th>User</th><th>Role</th><th>Club</th><th>Password State</th><th>Actions</th></tr></thead>
       <tbody>
         {{range .Users}}
         <tr class="border-t">
           <td>{{.Username}}</td>
           <td>
-            <form class="flex flex-wrap gap-2 items-center" hx-post="/api/users/{{.ID}}" hx-target="#user-result-{{.ID}}">
+            <form class="flex flex-wrap gap-2 items-center" hx-post="/api/users/{{.ID}}" hx-target="#user-role-result-{{.ID}}" hx-swap="innerHTML">
               <select name="role" class="border rounded px-2 py-1">
                 <option value="member" {{if eq .Role "member"}}selected{{end}}>member</option>
                 <option value="team_lead" {{if eq .Role "team_lead"}}selected{{end}}>team_lead</option>
@@ -23,9 +23,15 @@
           <td><input name="club_id" class="border rounded px-2 py-1 w-24" value="{{if ne .ClubLabel "unassigned"}}{{.ClubLabel}}{{end}}" placeholder="club" /></td>
           <td>{{if .MustChangePass}}reset required{{else}}active{{end}}</td>
           <td>
-              <button class="bg-slate-900 text-white rounded px-3 py-1">Save</button>
+              <button class="bg-slate-900 text-white rounded px-3 py-1">Save Role</button>
             </form>
-            <div id="user-result-{{.ID}}" class="text-xs text-slate-600 mt-1"></div>
+            <form class="mt-2 flex flex-wrap gap-2 items-center" hx-post="/api/auth/admin-reset" hx-target="#user-reset-result-{{.ID}}" hx-swap="innerHTML">
+              <input type="hidden" name="user_id" value="{{.ID}}" />
+              <input type="password" name="temp_password" minlength="12" class="border rounded px-2 py-1" placeholder="temporary password" required />
+              <button class="bg-amber-700 text-white rounded px-3 py-1">Reset Password</button>
+            </form>
+            <div id="user-role-result-{{.ID}}" class="text-xs text-slate-600 mt-1"></div>
+            <div id="user-reset-result-{{.ID}}" class="text-xs text-slate-600 mt-1"></div>
           </td>
         </tr>
         {{else}}

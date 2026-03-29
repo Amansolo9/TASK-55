@@ -63,3 +63,49 @@ func TestCreditRuleRejectsInvalidRanges(t *testing.T) {
 		t.Fatalf("expected threshold range validation failure")
 	}
 }
+
+func TestCreditIssueUsesHistoricalRuleByTransactionDate(t *testing.T) {
+	st := setupStore(t)
+	defer st.Close()
+	credit := services.NewCreditService(st)
+	endV1 := "2025-12-31"
+	if _, err := credit.CreateRule("v1", services.CreditFormula{Weight: 1}, false, false, "2025-01-01", &endV1, 1, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := credit.CreateRule("v2", services.CreditFormula{Weight: 2}, false, false, "2026-01-01", nil, 1, true); err != nil {
+		t.Fatal(err)
+	}
+	_, historicalCredit, err := credit.IssueCredit(551, 80, false, false, "2025-08-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if historicalCredit != 80 {
+		t.Fatalf("expected historical txn to use v1 weight=1, got %v", historicalCredit)
+	}
+	_, currentCredit, err := credit.IssueCredit(552, 80, false, false, "2026-08-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentCredit != 160 {
+		t.Fatalf("expected current txn to use v2 weight=2, got %v", currentCredit)
+	}
+}
+
+func TestCreditIssueIgnoresInactiveOverlappingRule(t *testing.T) {
+	st := setupStore(t)
+	defer st.Close()
+	credit := services.NewCreditService(st)
+	if _, err := credit.CreateRule("v-active", services.CreditFormula{Weight: 1}, false, false, "2026-01-01", nil, 1, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := credit.CreateRule("v-inactive-overlap", services.CreditFormula{Weight: 5}, false, false, "2026-06-01", nil, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	_, value, err := credit.IssueCredit(777, 100, false, false, "2026-07-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != 100 {
+		t.Fatalf("expected active rule weight=1 to apply, got %v", value)
+	}
+}
