@@ -14,8 +14,16 @@ docker run --rm \
   sh -c "go test ./unit_tests/... -v && go test ./API_tests/... -v"
 
 # Frontend: Vitest template/partial unit tests in the official Node container.
+# Copy sources into /tmp inside the container so node_modules is created on a
+# container-local path (not the bind mount, which may be noexec on CI runners
+# and trigger "sh: vitest: Permission denied"). Invoke vitest through `node`
+# to avoid relying on the bin shebang's execute bit entirely.
 docker run --rm \
-  -v "$(pwd)":/app \
-  -w /app/frontend_tests \
+  -v "$(pwd)":/app:ro \
   node:22-alpine \
-  sh -c "npm install --no-audit --no-fund --silent && npm test"
+  sh -c "cp -r /app/frontend_tests /tmp/frontend_tests \
+    && cp -r /app/views /tmp/views \
+    && rm -rf /tmp/frontend_tests/node_modules \
+    && cd /tmp/frontend_tests \
+    && npm install --no-audit --no-fund --silent \
+    && node ./node_modules/vitest/vitest.mjs run"
