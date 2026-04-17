@@ -1,0 +1,13 @@
+{
+  "name": "clubops-frontend-tests",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "cheerio": "1.0.0",
+    "vitest": "2.1.8"
+  }
+}

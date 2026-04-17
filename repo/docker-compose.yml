@@ -10,6 +10,8 @@ services:
       - APP_ENCRYPTION_KEY=local-dev-encryption-key-please-change
       - APP_DB_PATH=/data/fullstack.db
       - APP_BOOTSTRAP_ADMIN_PASSWORD=ChangeMe12345!-replace-for-real-use
+      - APP_SEED_DEMO_USERS=true
+      - APP_DEMO_USER_PASSWORD=DemoPass12345!
     volumes:
       - sqlite_data:/data
       - ./static/uploads:/app/static/uploads

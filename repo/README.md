@@ -1,120 +1,190 @@
+<!-- project-type: fullstack -->
+
 # ClubOps Governance & Finance Portal
 
-Go (Fiber) + HTMX + SQLite implementation for multi-site membership governance, moderation, and finance workflows.
+**Project type:** `fullstack`
+
+Go (Fiber) + HTMX + SQLite implementation for multi-site membership governance, moderation, and finance workflows. Everything (app, database, tests, e2e) runs inside Docker — no host-level Go/Node install is required.
+
+---
 
 ## One-click start
 
 ```bash
-docker compose up --build
+docker-compose up
 ```
+
+> The `docker-compose up` command builds the image on first run and starts the app container. Use `docker-compose up --build` to force a rebuild after code changes.
 
 App URL: `http://localhost:8080`
 
-Required env:
-- `APP_ENCRYPTION_KEY` (set in `docker-compose.yml` for local default)
-- `APP_DB_PATH` (defaults to `./fullstack.db` for local runs; Docker sets `/data/fullstack.db`)
-- `APP_BOOTSTRAP_ADMIN_PASSWORD` (required when seeding the admin account)
-- `APP_PORT` (optional; defaults to `8080`)
+All required environment variables are preset in `docker-compose.yml`:
 
-Persistence:
-- SQLite DB in Docker volume: `sqlite_data`
-- Uploaded review images in: `./static/uploads`
+| Variable | Purpose | Default in compose |
+|---|---|---|
+| `APP_ENCRYPTION_KEY` | AES-GCM key for PII columns | `local-dev-encryption-key-please-change` |
+| `APP_DB_PATH` | SQLite file path inside container | `/data/fullstack.db` |
+| `APP_BOOTSTRAP_ADMIN_PASSWORD` | Seeds the `admin` account | `ChangeMe12345!-replace-for-real-use` |
+| `APP_SEED_DEMO_USERS` | Creates demo accounts for every role | `true` |
+| `APP_DEMO_USER_PASSWORD` | Password for seeded demo accounts | `DemoPass12345!` |
+| `APP_PORT` | Listen port | `8080` |
 
-## Seeded account
+Persistence: the `sqlite_data` Docker volume holds the database; `./static/uploads` is bind-mounted for uploaded review/avatar images.
 
-- Username: `admin`
-- Initial password: value of `APP_BOOTSTRAP_ADMIN_PASSWORD`
+---
 
-The seeded account is configured for forced password change/reset workflow; use:
-- `POST /api/auth/change-password` (for current user)
-- `POST /api/auth/admin-reset` (admin-only)
+## Demo credentials (all roles)
 
-When a user is flagged for password rotation (`must_change_password = 1`), the UI redirects to `/change-password` until the password is updated.
+When the container starts with the defaults above, the following accounts are seeded and usable immediately via `POST /login` or the `/login` UI:
 
-Registration:
-- Public `/register` creates `member` accounts only.
-- Elevated roles (`team_lead`, `organizer`, `admin`) must be assigned by admin workflows.
+| Role | Username | Password |
+|---|---|---|
+| `admin` | `admin` | `ChangeMe12345!-replace-for-real-use` |
+| `organizer` | `organizer_demo` | `DemoPass12345!` |
+| `team_lead` | `teamlead_demo` | `DemoPass12345!` |
+| `member` | `member_demo` | `DemoPass12345!` |
 
-## Test commands
+The `admin` account is flagged for forced password change on first login (redirects to `/change-password` until rotated). The three demo accounts are pre-rotated for direct use.
+
+Registration via public `POST /register` always creates `member`-role accounts only. Elevated roles must be assigned through admin workflows.
+
+---
+
+## How to verify the system works
+
+After `docker-compose up`, run these checks from a host shell to confirm the full stack is healthy.
+
+### 1. Landing / login page reachable
+
+```bash
+curl -sI http://localhost:8080/login | head -1
+```
+
+Expected: `HTTP/1.1 200 OK`
+
+### 2. Authenticate as admin and capture session + CSRF cookies
+
+```bash
+curl -s -c cookies.txt \
+  -d "username=admin&password=ChangeMe12345!-replace-for-real-use" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -o /dev/null -w "%{http_code}\n" \
+  http://localhost:8080/login
+```
+
+Expected: `302`. The file `cookies.txt` must now contain both `session_token` and `csrf_token` entries.
+
+### 3. Authenticated dashboard is served
+
+```bash
+curl -s -b cookies.txt -o /dev/null -w "%{http_code}\n" http://localhost:8080/
+```
+
+Expected: `200` (redirects to `/change-password` until admin rotates — that is also a 200 page).
+
+### 4. API smoke call — list budgets (scoped)
+
+```bash
+CSRF=$(grep csrf_token cookies.txt | awk '{print $NF}')
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -o /dev/null -w "%{http_code}\n" \
+  http://localhost:8080/partials/budgets/list
+```
+
+Expected: `200`.
+
+### 5. Feature-flag evaluate endpoint (admin only)
+
+```bash
+curl -s -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  http://localhost:8080/api/flags/evaluate/credit_engine_v2
+```
+
+Expected JSON: `{"enabled":...,"flag":"credit_engine_v2"}`.
+
+### 6. Non-admin role is blocked from admin surfaces
+
+```bash
+curl -s -c member.txt \
+  -d "username=member_demo&password=DemoPass12345!" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -o /dev/null -w "%{http_code}\n" \
+  http://localhost:8080/login   # expect 302
+
+CSRF_M=$(grep csrf_token member.txt | awk '{print $NF}')
+curl -s -b member.txt -H "X-CSRF-Token: $CSRF_M" \
+  -o /dev/null -w "%{http_code}\n" \
+  http://localhost:8080/api/flags/evaluate/credit_engine_v2
+```
+
+Expected: `403` (members cannot evaluate feature flags).
+
+If all six checks return the expected status/response, the system is working end-to-end: authentication, CSRF, RBAC, session cookies, HTMX partials, API JSON endpoints, and DB-backed reads.
+
+---
+
+## Test commands (Docker-contained)
+
+All tests run inside the official Go container — no host Go install required:
 
 ```bash
 ./run_tests.sh
 ```
 
-Equivalent:
+This runs three layers inside Docker (no host toolchain required):
 
-```bash
-go test ./unit_tests/... -v
-go test ./API_tests/... -v
-```
+| Layer | Container | Location |
+|---|---|---|
+| Backend unit | `golang:1.26.1-alpine` | `./unit_tests` (services, store, domain rules) |
+| Backend API (no-mock HTTP) | `golang:1.26.1-alpine` | `./API_tests` (Fiber app on `:memory:` SQLite, real middleware + routes) |
+| Frontend unit (templates) | `node:22-alpine` | `./frontend_tests` (Vitest + cheerio parsing of HTML templates and partials) |
 
-Optional browser E2E (Playwright):
+The API tests exercise the real route tree — no mocks, no stubs. The frontend suite parses `repo/views/*.html` and `repo/views/partials/*.html` and asserts structural invariants (form actions, required inputs, HTMX attributes, CSRF wiring, role-gated nav links).
 
-```bash
-cd e2e
-npm install
-npm run test:smoke
-E2E_ADMIN_USER=admin E2E_ADMIN_PASS=your-admin-password npm run test:auth
-```
+---
 
-Deterministic local profile:
+## Architecture at a glance
 
-- `test:smoke` validates baseline unauthenticated UI rendering.
-- `test:auth` requires `E2E_ADMIN_USER` and `E2E_ADMIN_PASS` and runs authenticated end-to-end flows.
-- CI should run `test:auth` with seeded credentials to prevent silent downgrade to smoke-only verification.
+| Layer | Location | Notes |
+|---|---|---|
+| HTTP entry | `repo/cmd/main.go` | Boots Fiber, middleware, services |
+| Routes | `repo/internal/handlers/handler.go` `RegisterRoutes` | Public + `secured` + `/api` groups |
+| Middleware | `repo/internal/middleware/` | `AttachCurrentUser`, `RequireAuth(roles...)`, `CSRFProtection`, `AuditTrail` |
+| Services | `repo/internal/services/` | Auth, Finance, Credit, Review, MDM, Flags, Crypto, Audit |
+| Store | `repo/internal/store/` | SQLite DAO layer + migrations + seed |
+| Views | `repo/views/*.html` | Server-rendered templates + HTMX partials |
 
-## Local (non-Docker) run
+Key workflows: budget approval (>10% request → cross-role review), member PII encryption (AES-GCM), review moderation + appeal, MDM dimension/sales-fact import, feature-flag gating per role/club rollout.
 
-```bash
-export APP_ENCRYPTION_KEY=local-dev-encryption-key-please-change
-export APP_DB_PATH=./fullstack.db
-export APP_BOOTSTRAP_ADMIN_PASSWORD=change-this-bootstrap-admin-pass
-export APP_PORT=8080
-go run ./cmd
-```
+---
 
-Windows PowerShell:
+## Security controls
 
-```powershell
-$env:APP_ENCRYPTION_KEY="local-dev-encryption-key-please-change"
-$env:APP_DB_PATH="./fullstack.db"
-$env:APP_BOOTSTRAP_ADMIN_PASSWORD="change-this-bootstrap-admin-pass"
-$env:APP_PORT="8080"
-go run ./cmd
-```
-
-## Security notes
-
-- bcrypt cost `12`
-- Session timeout `30m` with sliding refresh on active use
-- 5 failed login attempts lock account for 15 minutes
-- Club-scoped access for non-admin operators with assigned clubs
-- Object-level checks on budget/review mutations
-- CSRF protection on authenticated mutations via `csrf_token` cookie + request token
-- App-layer encryption for member contact fields (AES-GCM)
-- `members.custom_fields` is stored encrypted at rest with an `enc:v1:` prefix; plaintext legacy rows are lazily migrated on read/write paths
-- Audit logs are append-only for mutation endpoints and have 2-year retention cleanup
-- Audit payload capture is path-allowlisted; sensitive fields (`email`, `phone`, `custom_fields`, `comment`, auth tokens/passwords, identifiers) are redacted by default
-- Frontend runtime assets are served locally from `/static/vendor` for offline use
-
-## Sensitive field policy
-
-- Member PII (`email_encrypted`, `phone_encrypted`) and `custom_fields` must only be persisted in encrypted form
-- New schema additions carrying identifiers or contact data should follow the same app-layer encryption approach and audit redaction policy
+- bcrypt cost `12`; 5 failed logins → 15-minute lockout.
+- Session timeout `30m` with sliding refresh; `no-store` on authenticated responses.
+- CSRF protection on all authenticated mutations (`csrf_token` cookie + `X-CSRF-Token` header).
+- Club-scoped access for non-admin operators; object-level checks on budget/review mutations.
+- App-layer AES-GCM encryption for `members.email`, `members.phone`, `members.custom_fields` (`enc:v1:` prefix; legacy plaintext lazily migrated on read/write).
+- Audit logs: append-only, 2-year retention, path-allowlisted; sensitive fields (`email`, `phone`, `custom_fields`, `comment`, passwords/tokens) redacted.
+- Member CSV export emits an explicit audit entry (action, row count, club scope).
+- Frontend vendor assets served locally from `/static/vendor` (offline-capable).
 
 ## API error schema
 
-- API endpoints return a normalized error shape: `{ "error": "...", "error_code": "...", "message": "..." }`
-- `error_code` values include: `validation_error`, `conflict`, `forbidden`, `not_found`, `bad_request`
-- Detailed internal errors are logged server-side; client responses are sanitized for safety and consistency
-- `APP_DEBUG_ERRORS` should remain disabled outside local development to avoid verbose raw error details in logs
+```json
+{ "error": "...", "error_code": "...", "message": "..." }
+```
+
+`error_code` values: `validation_error`, `conflict`, `forbidden`, `not_found`, `bad_request`.
+
+---
 
 ## Additional workflows
 
-- Reviews must reference a fulfilled order/service record (`fulfilled_order_id`)
-- Region hierarchy management is available at `/regions` for admin/organizer users
-- Dimension and sales fact import workflows are available at `/mdm`
-- Admin user provisioning/role assignment is available at `/users`
-- Club avatars can be uploaded locally and are stored under `./static/uploads/avatars`
-- Budget spend updates can be recorded from `/budgets` to drive execution and alerting
-- Member CSV import returns an inline downloadable error-report link in the members UI when row validation fails
+- Reviews must reference a fulfilled order/service record (`fulfilled_order_id`).
+- Region hierarchy management at `/regions` (admin/organizer).
+- Dimension and sales-fact imports at `/mdm` (admin/organizer).
+- Admin user provisioning at `/users`.
+- Club avatars uploaded under `./static/uploads/avatars`.
+- Budget spend updates recorded from `/budgets` drive execution % and threshold alerts.
+- Member CSV import returns an inline downloadable error-report link on validation failure.

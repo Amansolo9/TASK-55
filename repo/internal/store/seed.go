@@ -43,7 +43,36 @@ func (s *SQLiteStore) SeedDefaults() error {
 		return err
 	}
 
-	_, err = s.DB.Exec(`INSERT INTO users (username, password_hash, role, club_id, must_change_password, password_set_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		"admin", string(hashBytes), "admin", nil, 1, time.Now())
-	return err
+	if _, err := s.DB.Exec(`INSERT INTO users (username, password_hash, role, club_id, must_change_password, password_set_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"admin", string(hashBytes), "admin", nil, 1, time.Now()); err != nil {
+		return err
+	}
+
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("APP_SEED_DEMO_USERS")), "true") {
+		demoPassword := strings.TrimSpace(os.Getenv("APP_DEMO_USER_PASSWORD"))
+		if demoPassword == "" {
+			demoPassword = bootstrapPassword
+		}
+		demoHash, err := bcrypt.GenerateFromPassword([]byte(demoPassword), cost)
+		if err != nil {
+			return err
+		}
+		clubID := int64(1)
+		demos := []struct {
+			username string
+			role     string
+			clubID   *int64
+		}{
+			{"organizer_demo", "organizer", &clubID},
+			{"teamlead_demo", "team_lead", &clubID},
+			{"member_demo", "member", nil},
+		}
+		for _, d := range demos {
+			if _, err := s.DB.Exec(`INSERT OR IGNORE INTO users (username, password_hash, role, club_id, must_change_password, password_set_at) VALUES (?, ?, ?, ?, 0, ?)`,
+				d.username, string(demoHash), d.role, d.clubID, time.Now()); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
